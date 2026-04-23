@@ -170,7 +170,12 @@ if df.empty:
 # ======================
 # SOLO TASK COMPLETATI
 # ======================
-df_done = df[df["Status"].isin(DONE_STATUSES)].copy()
+df_done = df[
+    df["Status"]
+    .str.lower()
+    .str.strip()
+    .apply(lambda s: any(done.lower() in s for done in DONE_STATUSES))
+].copy()
 
 # ======================
 # METRICS (solo DONE)

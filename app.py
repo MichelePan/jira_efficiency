@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 
 from datetime import date, timedelta
 from requests.auth import HTTPBasicAuth
@@ -45,13 +44,8 @@ api_token = st.secrets["JIRA_API_TOKEN"]
 default_jql = st.secrets.get("DEFAULT_JQL", "project = KAN")
 EPIC_LINK_FIELD_ID = st.secrets.get("EPIC_LINK_FIELD_ID", None)
 
-# Stati considerati "completati"
-DONE_STATUSES = st.secrets.get("DONE_STATUSES", ["Done", "Closed", "Resolved"])
-
 BASE_URL = f"https://{jira_domain}/rest/api/3"
 AUTH = HTTPBasicAuth(email, api_token)
-
-MARGIN_DAYS = 3
 
 # ======================
 # SIDEBAR FILTERS
@@ -71,16 +65,25 @@ if refresh:
     st.cache_data.clear()
 
 # ======================
-# DATA FETCH
+# DATA FETCH (solo task chiusi nel periodo)
 # ======================
 jql = (
     f"({default_jql}) "
-    f'AND updated >= "{(date_from - timedelta(days=MARGIN_DAYS)).isoformat()}"'
+    f'AND resolutiondate >= "{date_from.isoformat()}" '
+    f'AND resolutiondate <= "{date_to.isoformat()}"'
 )
 
 @st.cache_data(ttl=3600)
 def search_issues(jql):
-    fields = ["summary", "issuetype", "timetracking", "assignee", "status", "parent"]
+    fields = [
+        "summary",
+        "issuetype",
+        "timetracking",
+        "assignee",
+        "status",
+        "parent",
+        "resolutiondate"
+    ]
     if EPIC_LINK_FIELD_ID:
         fields.append(EPIC_LINK_FIELD_ID)
 
@@ -119,6 +122,7 @@ def build_df(issues):
         assignee = (f.get("assignee") or {}).get("displayName", "")
         status = (f.get("status") or {}).get("name", "")
         itype = (f.get("issuetype") or {}).get("name", "")
+        resolution_date = f.get("resolutiondate")
 
         wls = get_worklogs(key)
         real = sum((w.get("timeSpentSeconds", 0) or 0) for w in wls) / 3600
@@ -130,6 +134,7 @@ def build_df(issues):
             "Assignee": assignee,
             "Status": status,
             "Type": itype,
+            "ResolutionDate": resolution_date,
             "Stima": est,
             "Ore": real
         })
@@ -144,6 +149,7 @@ issues = search_issues(jql)
 df = build_df(issues)
 
 if df.empty:
+    st.warning("Nessun task completato nel periodo selezionato")
     st.stop()
 
 # ======================
@@ -168,37 +174,29 @@ if df.empty:
     st.stop()
 
 # ======================
-# SOLO TASK COMPLETATI
+# METRICS (solo task chiusi)
 # ======================
-df_done = df[
-    df["Status"]
-    .str.lower()
-    .str.strip()
-    .apply(lambda s: any(done.lower() in s for done in DONE_STATUSES))
-].copy()
+tot_stima = df["Stima"].sum()
+tot_ore = df["Ore"].sum()
 
-# ======================
-# METRICS (solo DONE)
-# ======================
-tot_stima = df_done["Stima"].sum()
-tot_ore = df_done["Ore"].sum()
-
-eff = tot_stima / tot_ore if tot_ore > 0 else 0
+if tot_ore == 0:
+    eff = 0
+    st.warning("Nessun worklog sui task → efficienza non calcolabile")
+else:
+    eff = tot_stima / tot_ore
 
 c1, c2, c3 = st.columns(3)
-c1.metric("Ore stimate (done)", f"{tot_stima:.2f}")
-c2.metric("Ore effettive (done)", f"{tot_ore:.2f}")
-c3.metric("Efficienza globale (done)", f"{eff*100:.1f}%")
+c1.metric("Ore stimate", f"{tot_stima:.2f}")
+c2.metric("Ore effettive", f"{tot_ore:.2f}")
+c3.metric("Efficienza globale", f"{eff*100:.1f}%")
 
 # ======================
-# EFFICIENZA SOLO DONE
+# EFFICIENZA
 # ======================
-df_done["Efficienza"] = df_done["Stima"] / df_done["Ore"]
-df_done = df_done.replace([np.inf, -np.inf], np.nan).dropna(subset=["Efficienza"])
+df = df[df["Ore"] > 0].copy()
 
-# Mantieni tutto ma efficienza solo sui done
-df["Efficienza"] = None
-df.loc[df_done.index, "Efficienza"] = df_done["Efficienza"]
+df["Efficienza"] = df["Stima"] / df["Ore"]
+df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=["Efficienza"])
 
 st.divider()
 
@@ -207,18 +205,6 @@ st.divider()
 # ======================
 st.subheader("Dettaglio efficienza")
 st.dataframe(df.sort_values("Efficienza", ascending=False), use_container_width=True)
-
-# ======================
-# VISUALS
-# ======================
-st.subheader("📊 Top inefficienze (task completati)")
-
-top_bad = df_done.sort_values("Efficienza").head(10)
-
-fig, ax = plt.subplots()
-ax.barh(top_bad["Issue"], top_bad["Ore"] - top_bad["Stima"])
-ax.set_title("Top sovra-consumo (Ore - Stima)")
-st.pyplot(fig)
 
 # ======================
 # DOWNLOAD

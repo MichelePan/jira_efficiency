@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import requests
 
 from datetime import date, timedelta
 from requests.auth import HTTPBasicAuth
@@ -42,8 +41,12 @@ st.title("📊 Jira Efficiency Dashboard")
 jira_domain = st.secrets["JIRA_DOMAIN"]
 email = st.secrets["JIRA_EMAIL"]
 api_token = st.secrets["JIRA_API_TOKEN"]
+
 default_jql = st.secrets.get("DEFAULT_JQL", "project = KAN")
 EPIC_LINK_FIELD_ID = st.secrets.get("EPIC_LINK_FIELD_ID", None)
+
+# Stati considerati "completati"
+DONE_STATUSES = st.secrets.get("DONE_STATUSES", ["Done", "Closed", "Resolved"])
 
 BASE_URL = f"https://{jira_domain}/rest/api/3"
 AUTH = HTTPBasicAuth(email, api_token)
@@ -144,7 +147,7 @@ if df.empty:
     st.stop()
 
 # ======================
-# FILTERS (ADVANCED)
+# FILTERS
 # ======================
 st.sidebar.subheader("Filtri avanzati")
 
@@ -165,20 +168,32 @@ if df.empty:
     st.stop()
 
 # ======================
-# METRICS
+# SOLO TASK COMPLETATI
 # ======================
-tot_stima = df["Stima"].sum()
-tot_ore = df["Ore"].sum()
+df_done = df[df["Status"].isin(DONE_STATUSES)].copy()
+
+# ======================
+# METRICS (solo DONE)
+# ======================
+tot_stima = df_done["Stima"].sum()
+tot_ore = df_done["Ore"].sum()
 
 eff = tot_stima / tot_ore if tot_ore > 0 else 0
 
 c1, c2, c3 = st.columns(3)
-c1.metric("Ore stimate", f"{tot_stima:.2f}")
-c2.metric("Ore effettive", f"{tot_ore:.2f}")
-c3.metric("Efficienza globale", f"{eff*100:.1f}%")
+c1.metric("Ore stimate (done)", f"{tot_stima:.2f}")
+c2.metric("Ore effettive (done)", f"{tot_ore:.2f}")
+c3.metric("Efficienza globale (done)", f"{eff*100:.1f}%")
 
-df["Efficienza"] = df["Stima"] / df["Ore"]
-df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=["Efficienza"])
+# ======================
+# EFFICIENZA SOLO DONE
+# ======================
+df_done["Efficienza"] = df_done["Stima"] / df_done["Ore"]
+df_done = df_done.replace([np.inf, -np.inf], np.nan).dropna(subset=["Efficienza"])
+
+# Mantieni tutto ma efficienza solo sui done
+df["Efficienza"] = None
+df.loc[df_done.index, "Efficienza"] = df_done["Efficienza"]
 
 st.divider()
 
@@ -191,31 +206,14 @@ st.dataframe(df.sort_values("Efficienza", ascending=False), use_container_width=
 # ======================
 # VISUALS
 # ======================
+st.subheader("📊 Top inefficienze (task completati)")
 
-st.subheader("📊 Analisi visuale")
+top_bad = df_done.sort_values("Efficienza").head(10)
 
-# Scatter Stima vs Effettivo
-fig1, ax1 = plt.subplots()
-ax1.scatter(df["Stima"], df["Ore"])
-ax1.set_xlabel("Stima (h)")
-ax1.set_ylabel("Ore effettive (h)")
-ax1.set_title("Stima vs Effettivo")
-st.pyplot(fig1)
-
-# Distribuzione efficienza
-fig2, ax2 = plt.subplots()
-ax2.hist(df["Efficienza"], bins=20)
-ax2.set_title("Distribuzione Efficienza")
-ax2.set_xlabel("Efficienza")
-st.pyplot(fig2)
-
-# Top inefficienze
-top_bad = df.sort_values("Efficienza").head(10)
-
-fig3, ax3 = plt.subplots()
-ax3.barh(top_bad["Issue"], top_bad["Ore"] - top_bad["Stima"])
-ax3.set_title("Top sovra-consumo (Ore - Stima)")
-st.pyplot(fig3)
+fig, ax = plt.subplots()
+ax.barh(top_bad["Issue"], top_bad["Ore"] - top_bad["Stima"])
+ax.set_title("Top sovra-consumo (Ore - Stima)")
+st.pyplot(fig)
 
 # ======================
 # DOWNLOAD

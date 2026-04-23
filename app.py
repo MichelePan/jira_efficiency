@@ -65,7 +65,7 @@ if refresh:
     st.cache_data.clear()
 
 # ======================
-# DATA FETCH (solo task chiusi nel periodo)
+# DATA FETCH (solo task chiusi)
 # ======================
 jql = (
     f"({default_jql}) "
@@ -120,8 +120,6 @@ def build_df(issues):
         est = estimate_hours(f)
         epic = extract_epic(f)
         assignee = (f.get("assignee") or {}).get("displayName", "")
-        status = (f.get("status") or {}).get("name", "")
-        itype = (f.get("issuetype") or {}).get("name", "")
         resolution_date = f.get("resolutiondate")
 
         wls = get_worklogs(key)
@@ -132,8 +130,6 @@ def build_df(issues):
             "Summary": f.get("summary"),
             "Epic": epic,
             "Assignee": assignee,
-            "Status": status,
-            "Type": itype,
             "ResolutionDate": resolution_date,
             "Stima": est,
             "Ore": real
@@ -153,20 +149,25 @@ if df.empty:
     st.stop()
 
 # ======================
-# FILTERS
+# FILTERS (solo utili)
 # ======================
 st.sidebar.subheader("Filtri avanzati")
 
-epics = st.sidebar.multiselect("Epic", sorted(df["Epic"].unique()), default=df["Epic"].unique())
-assignees = st.sidebar.multiselect("Assignee", sorted(df["Assignee"].unique()), default=df["Assignee"].unique())
-statuses = st.sidebar.multiselect("Stato", sorted(df["Status"].unique()), default=df["Status"].unique())
-types = st.sidebar.multiselect("Tipo issue", sorted(df["Type"].unique()), default=df["Type"].unique())
+epics = st.sidebar.multiselect(
+    "Epic",
+    sorted(df["Epic"].unique()),
+    default=df["Epic"].unique()
+)
+
+assignees = st.sidebar.multiselect(
+    "Assignee",
+    sorted(df["Assignee"].unique()),
+    default=df["Assignee"].unique()
+)
 
 df = df[
     df["Epic"].isin(epics)
     & df["Assignee"].isin(assignees)
-    & df["Status"].isin(statuses)
-    & df["Type"].isin(types)
 ]
 
 if df.empty:
@@ -174,14 +175,14 @@ if df.empty:
     st.stop()
 
 # ======================
-# METRICS (solo task chiusi)
+# METRICS
 # ======================
 tot_stima = df["Stima"].sum()
 tot_ore = df["Ore"].sum()
 
 if tot_ore == 0:
     eff = 0
-    st.warning("Nessun worklog sui task → efficienza non calcolabile")
+    st.warning("Nessun worklog → efficienza non calcolabile")
 else:
     eff = tot_stima / tot_ore
 
